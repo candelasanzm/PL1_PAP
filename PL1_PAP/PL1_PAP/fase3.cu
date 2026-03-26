@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <cuda_runtime.h>
 #include <math.h>
+#include <limits.h>
 #include <device_launch_parameters.h>
 
 __global__ void fase3_simple(float* dev_datos, int numVuelos, int* dev_resSimple, int esMax) {
@@ -20,27 +21,31 @@ __global__ void fase3_basica(float* dev_datos, int numVuelos, int* dev_resBasica
 	__shared__ float datos_memoria[1024];
 
 	int i = blockIdx.x * blockDim.x + threadIdx.x;
-	if (i >= numVuelos) return;
-	if (isnan(dev_datos[i])) return;
 	
-	datos_memoria[threadIdx.x] = dev_datos[i];
+	datos_memoria[threadIdx.x] = NAN;
 	__syncthreads();
 
-	int posAnterior;
-	if (threadIdx.x > 0) {
-		posAnterior = (int)datos_memoria[threadIdx.x - 1];
+	if (i < numVuelos && !isnan(dev_datos[i])) {
+		datos_memoria[threadIdx.x] = dev_datos[i];
 	}
-	else {
-		posAnterior = (int)dev_datos[i];
-	}
+	
+	__syncthreads();
+
+	// Solo procesamos hilos validos con datos no NaN
+	if (i >= numVuelos || isnan(dev_datos[i])) return;
 
 	int posActual = (int)datos_memoria[threadIdx.x];
-	int posPosterior;
-	if (i + 1 < numVuelos) {
-		posPosterior = (int)datos_memoria[threadIdx.x + 1];
+	
+	// Para el anterior: comprobar que no sea el primer hilo del bloque y que no sea NAN
+	int posAnterior = posActual;
+	if (threadIdx.x > 0 && !isnan(datos_memoria[threadIdx.x - 1])) {
+		posAnterior = (int)datos_memoria[threadIdx.x - 1];
 	}
-	else {
-		posPosterior = (int)dev_datos[i];
+
+	// Para el posterior comprobar que no sea el ultimo hilo del bloque y que no sea NAN
+	int posPosterior = posActual;
+	if (threadIdx.x + 1 < blockDim.x && i + 1 < numVuelos && !isnan(datos_memoria[threadIdx.x + 1])) {
+		posPosterior = (int)datos_memoria[threadIdx.x + 1];
 	}
 
 	int resultado;
@@ -102,10 +107,14 @@ void ejecutarFase3(float* dep_delay, float* arr_delay, float* weather_delay, flo
 						int hilosPorBloque = prop.maxThreadsPerBlock; // maximo de hilos por bloque
 						int numBloques = (numVuelos + hilosPorBloque - 1) / hilosPorBloque;
 
-						int res_simple; // hay que declararlo como int porque atomic no vale para float
-						int res_basica;
-						int res_intermedia;
-						int res_reduccion;
+						// Inicializamos los resultados segun la operacion:
+						// Para maximo usamos INT_MIN para que cualquier valor sea mayor
+						// Para minimo usamos INT_MAX para que cualquier valor sea menor
+						int valorInicial = (opcion2 == 1) ? INT_MIN : INT_MAX;
+						int res_simple = valorInicial;
+						int res_basica = valorInicial;
+						int res_intermedia = valorInicial;
+						int res_reduccion = valorInicial;
 
 						float* dev_depDelay, * dev_arrDelay, * dev_weatherDelay, * dev_depTime, * dev_arrTime;
 						int* dev_resSimple, * dev_resBasica, * dev_resIntermedia, * dev_resReduccion;
@@ -125,6 +134,12 @@ void ejecutarFase3(float* dep_delay, float* arr_delay, float* weather_delay, flo
 						cudaMemcpy(dev_weatherDelay, weather_delay, numVuelos * sizeof(float), cudaMemcpyHostToDevice);
 						cudaMemcpy(dev_depTime, dep_time, numVuelos * sizeof(float), cudaMemcpyHostToDevice);
 						cudaMemcpy(dev_arrTime, arr_time, numVuelos * sizeof(float), cudaMemcpyHostToDevice);
+
+						// Copiamos los valores iniciales a la GPU
+						cudaMemcpy(dev_resSimple, &valorInicial, sizeof(int), cudaMemcpyHostToDevice);
+						cudaMemcpy(dev_resBasica, &valorInicial, sizeof(int), cudaMemcpyHostToDevice);
+						cudaMemcpy(dev_resIntermedia, &valorInicial, sizeof(int), cudaMemcpyHostToDevice);
+						cudaMemcpy(dev_resReduccion, &valorInicial, sizeof(int), cudaMemcpyHostToDevice);
 
 						dim3 dimGrid(numBloques);
 						dim3 dimBlock(hilosPorBloque);
@@ -170,6 +185,10 @@ void ejecutarFase3(float* dep_delay, float* arr_delay, float* weather_delay, flo
 								fase3_intermedia << <dimGrid, dimBlock >> > (dev_datos, numVuelos, dev_resIntermedia, 1);
 								fase3_reduccion << <dimGrid, dimBlock >> > (dev_datos, numVuelos, dev_resReduccion, 1);
 								cudaDeviceSynchronize();
+								cudaMemcpy(&res_simple, dev_resSimple, sizeof(int), cudaMemcpyDeviceToHost);
+								cudaMemcpy(&res_basica, dev_resBasica, sizeof(int), cudaMemcpyDeviceToHost);
+								cudaMemcpy(&res_intermedia, dev_resIntermedia, sizeof(int), cudaMemcpyDeviceToHost);
+								cudaMemcpy(&res_reduccion, dev_resReduccion, sizeof(int), cudaMemcpyDeviceToHost);
 								printf("\n[Simple] Max() ARR_DELAY = %d minutos\n", res_simple);
 								printf("[Basica] Max() ARR_DELAY = %d minutos\n", res_basica);
 								printf("[Intermedia] Max() ARR_DELAY = %d minutos\n", res_intermedia);
@@ -310,6 +329,7 @@ void ejecutarFase3(float* dep_delay, float* arr_delay, float* weather_delay, flo
 						break;
 					}
 				}
+				break;
 			}
 			case 6: return;
 			default:

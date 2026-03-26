@@ -20,8 +20,8 @@ __global__ void fase2(float* dev_arrdelay, int numVuelos, int opcion, int* dev_c
 		dev_tiempo[pos] = valor;
 		dev_indices[pos] = index; // guardamos un array de indices que posteriormente se usara para recuperar las matriculas
 	}
-	else if ((opcion == 2) && (valor > 0) && (-valor >= c_umbral)) {
-		printf("- Hilo %d | Matricula: %s | Adelanto de %d minutos.\n", index, matricula, valor);
+	else if ((opcion == 2) && (valor < -c_umbral)) {
+		printf("- Hilo %d | Matricula: %s | Adelanto de %d minutos.\n", index, matricula, -valor);
 		int pos = atomicAdd(dev_contador, 1);
 		dev_tiempo[pos] = valor;
 		dev_indices[pos] = index;
@@ -38,7 +38,7 @@ void ejecutarFase2(float* arr_delay, int numVuelos, char** tail_num) {
 	// Pedimos la opcion
 	int opcion = -1;
 	while (opcion != 0) {
-		printf("\nElige como filtrar:: \n");
+		printf("\nElige como filtrar:\n");
 		printf("1. Retrasos\n");
 		printf("2. Adelantos\n");
 		printf("3. Aterrizaje a tiempo\n");
@@ -118,7 +118,7 @@ void ejecutarFase2(float* arr_delay, int numVuelos, char** tail_num) {
 				}
 				else if (opcion == 2) {
 					for (int i = 0; i < h_contador; i++) {
-						printf("- Matricula %s. Adelanto: %d minutos.\n", tail_num[h_indices[i]], h_tiempo[i]);
+						printf("- Matricula %s. Adelanto: %d minutos.\n", tail_num[h_indices[i]], -h_tiempo[i]);
 					}
 				}
 			}
@@ -128,6 +128,9 @@ void ejecutarFase2(float* arr_delay, int numVuelos, char** tail_num) {
 			cudaFree(dev_tailNum);
 			cudaFree(dev_indices);
 			cudaFree(dev_tiempo);
+			free(h_tail);
+			free(h_indices);
+			free(h_tiempo);
 			break; // para no entrar en el case 3
 		}
 		case 4: return;

@@ -12,7 +12,7 @@ __global__ void fase1(float* dev_depdelay, int numVuelos, int umbral, int opcion
 		printf("Hilo %d. Retraso de %d minutos.\n", index, valor);
 		atomicAdd(dev_contador, 1);
 	}
-	else if ((opcion == 2) && (valor < umbral)) {
+	else if ((opcion == 2) && (valor < -umbral)) {
 		printf("Hilo %d. Adelanto de %d minutos.\n", index, -valor);
 		atomicAdd(dev_contador, 1);
 	}
@@ -79,7 +79,7 @@ void ejecutarFase1(float* dep_delay, int numVuelos) {
 
 				cudaFree(dev_contador);
 				cudaFree(dev_depdelay);
-				break; // para no entrar en el case 3
+				break; // para no entrar en el case 4
 			}
 			case 4: return;
 			default: 

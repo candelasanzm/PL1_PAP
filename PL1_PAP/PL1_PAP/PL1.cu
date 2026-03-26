@@ -160,7 +160,6 @@ int main() {
 	}
 
 	printf("Dataset cargado: %d vuelos\n", ds->numVuelos);
-	printf("DEBUG arr_delay[20235] = %f\n", ds->arr_delay[20235]);
 
 	// Men�
 	int opcion = -1;
