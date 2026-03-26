@@ -60,12 +60,199 @@ __global__ void fase3_basica(float* dev_datos, int numVuelos, int* dev_resBasica
 }
 
 __global__ void fase3_intermedia(float* dev_datos, int numVuelos, int* dev_resIntermedia, int esMax) {
+	__shared__ float datos_memoria[1024];
 
+	int i = blockIdx.x * blockDim.x + threadIdx.x;
+
+	datos_memoria[threadIdx.x] = NAN;
+	__syncthreads();
+
+	if (i < numVuelos && !isnan(dev_datos[i])) {
+		datos_memoria[threadIdx.x] = dev_datos[i];
+	}
+
+	__syncthreads();
+
+	// Solo procesamos hilos validos con datos no NaN
+	if (i >= numVuelos || isnan(dev_datos[i])) return;
+
+	int posActual = (int)datos_memoria[threadIdx.x];
+
+	// Para el anterior: comprobar que no sea el primer hilo del bloque y que no sea NAN
+	int posAnterior = posActual;
+	if (threadIdx.x > 0 && !isnan(datos_memoria[threadIdx.x - 1])) {
+		posAnterior = (int)datos_memoria[threadIdx.x - 1];
+	}
+
+	// Para el posterior comprobar que no sea el ultimo hilo del bloque y que no sea NAN
+	int posPosterior = posActual;
+	if (threadIdx.x + 1 < blockDim.x && i + 1 < numVuelos && !isnan(datos_memoria[threadIdx.x + 1])) {
+		posPosterior = (int)datos_memoria[threadIdx.x + 1];
+	}
+
+	// Guardamos el maximo y minimo en memoria compartida
+	int resultado;
+	if (esMax) {
+		resultado = max(max(posAnterior, posActual), posPosterior);
+	}
+	else {
+		resultado = min(min(posAnterior, posActual), posPosterior);
+	}
+
+	datos_memoria[threadIdx.x] = resultado;
+	__syncthreads();
+
+	if (threadIdx.x % 2 == 0) {
+		int actual = (int)datos_memoria[threadIdx.x];
+		int siguiente = actual;
+		if (threadIdx.x + 1 < blockDim.x && i + 1 < numVuelos && !isnan(datos_memoria[threadIdx.x + 1])) {
+			siguiente = (int)datos_memoria[threadIdx.x + 1];
+		}
+
+		int comparacion;
+		if (esMax) {
+			comparacion = max(actual, siguiente);
+			atomicMax(dev_resIntermedia, comparacion);
+		}
+		else {
+			comparacion = min(actual, siguiente);
+			atomicMin(dev_resIntermedia, comparacion);
+		}
+	}
 }
 
 __global__ void fase3_reduccion(float* dev_datos, int numVuelos, int* dev_resReduccion, int esMax) {
+	__shared__ int datos_memoria[1024];
 
+	int i = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (i < numVuelos && !isnan(dev_datos[i])) {
+		datos_memoria[threadIdx.x] = (int)dev_datos[i];
+	}
+	else {
+		if (esMax) {
+			datos_memoria[threadIdx.x] = INT_MIN;
+		}
+		else {
+			datos_memoria[threadIdx.x] = INT_MAX;
+		}
+	}
+
+	__syncthreads();
+
+	// Reducción en árbol dentro del bloque
+	for (int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
+		if (threadIdx.x < stride) {
+			if (esMax) {
+				if (datos_memoria[threadIdx.x + stride] > datos_memoria[threadIdx.x]) {
+					datos_memoria[threadIdx.x] = datos_memoria[threadIdx.x + stride];
+				}
+			}
+			else {
+				if (datos_memoria[threadIdx.x + stride] < datos_memoria[threadIdx.x]) {
+					datos_memoria[threadIdx.x] = datos_memoria[threadIdx.x + stride];
+				}
+			}
+		}
+
+		__syncthreads();
+	}
+
+	// El hilo 0 escribe el resultado
+	if (threadIdx.x == 0) {
+		dev_resReduccion[blockIdx.x] = datos_memoria[0];
+	}
 }
+
+// Ahora hacemos una función para hacerla recursiva
+__global__ void fase3_reduccion_int(int* dev_datos, int numVuelos, int* dev_resReduccion, int esMax) {
+	__shared__ int datos_memoria[1024];
+
+	int i = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (i < numVuelos) {
+		datos_memoria[threadIdx.x] = dev_datos[i];
+	}
+	else {
+		if (esMax) {
+			datos_memoria[threadIdx.x] = INT_MIN;
+		}
+		else {
+			datos_memoria[threadIdx.x] = INT_MAX;
+		}
+	}
+
+	__syncthreads();
+
+	// Reducción en árbol dentro del bloque
+	for (int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
+		if (threadIdx.x < stride) {
+			if (esMax) {
+				if (datos_memoria[threadIdx.x + stride] > datos_memoria[threadIdx.x]) {
+					datos_memoria[threadIdx.x] = datos_memoria[threadIdx.x + stride];
+				}
+			}
+			else {
+				if (datos_memoria[threadIdx.x + stride] < datos_memoria[threadIdx.x]) {
+					datos_memoria[threadIdx.x] = datos_memoria[threadIdx.x + stride];
+				}
+			}
+		}
+
+		__syncthreads();
+	}
+
+	// El hilo 0 escribe el resultado
+	if (threadIdx.x == 0) {
+		dev_resReduccion[blockIdx.x] = datos_memoria[0];
+	}
+}
+
+// Funcion para llamar desde el host
+int ejecutarReduccion(float* dev_datos, int numVuelos, int esMax, int hilosPorBloque) {
+	// Llamamos a la primera funcion, con los datos iniciales del programa
+	int n = (numVuelos + hilosPorBloque - 1) / hilosPorBloque;
+	int* dev_temp;
+	cudaMalloc((void**)&dev_temp, n * sizeof(int));
+	fase3_reduccion << <n, hilosPorBloque >> > (dev_datos, numVuelos, dev_temp, esMax);
+	cudaDeviceSynchronize();
+
+	// Llamamos a la segunda funcion recursivamente hasta tener 10 elementos
+	while (n > 10) {
+		int bloques = (n + hilosPorBloque - 1) / hilosPorBloque;
+		int* dev_reduccion;
+		cudaMalloc((void**)&dev_reduccion, bloques * sizeof(int));
+		fase3_reduccion_int << <bloques, hilosPorBloque >> > (dev_temp, n, dev_reduccion, esMax);
+		cudaDeviceSynchronize();
+		cudaFree(dev_temp);
+		dev_temp = dev_reduccion;
+		n = bloques;
+	}
+
+	// Copiamos los 10 valores en el host
+	int* h_temp = (int*)malloc(n * sizeof(int));
+	cudaMemcpy(h_temp, dev_temp, n * sizeof(int), cudaMemcpyDeviceToHost);
+	cudaFree(dev_temp);
+
+	// Procesamos en la cpu, iteramos el vector final
+	int resultado = h_temp[0];
+	for (int i = 1; i < n; i++) {
+		if (esMax) {
+			if (h_temp[i] > resultado) {
+				resultado = h_temp[i];
+			} 
+		}
+		else {
+			if (h_temp[i] < resultado) {
+				resultado = h_temp[i];
+			}
+		}
+	}
+	
+	free(h_temp);
+	return resultado;
+}
+
 
 void ejecutarFase3(float* dep_delay, float* arr_delay, float* weather_delay, float* dep_time, float* arr_time, int numVuelos) {
 	// Pedimos la opcion
@@ -117,7 +304,7 @@ void ejecutarFase3(float* dep_delay, float* arr_delay, float* weather_delay, flo
 						int res_reduccion = valorInicial;
 
 						float* dev_depDelay, * dev_arrDelay, * dev_weatherDelay, * dev_depTime, * dev_arrTime;
-						int* dev_resSimple, * dev_resBasica, * dev_resIntermedia, * dev_resReduccion;
+						int* dev_resSimple, * dev_resBasica, * dev_resIntermedia;
 
 						cudaMalloc((void**)&dev_depDelay, numVuelos * sizeof(float));
 						cudaMalloc((void**)&dev_arrDelay, numVuelos * sizeof(float));
@@ -127,7 +314,6 @@ void ejecutarFase3(float* dep_delay, float* arr_delay, float* weather_delay, flo
 						cudaMalloc((void**)&dev_resSimple, sizeof(int));
 						cudaMalloc((void**)&dev_resBasica, sizeof(int));
 						cudaMalloc((void**)&dev_resIntermedia, sizeof(int));
-						cudaMalloc((void**)&dev_resReduccion, sizeof(int));
 
 						cudaMemcpy(dev_depDelay, dep_delay, numVuelos * sizeof(float), cudaMemcpyHostToDevice);
 						cudaMemcpy(dev_arrDelay, arr_delay, numVuelos * sizeof(float), cudaMemcpyHostToDevice);
@@ -139,7 +325,6 @@ void ejecutarFase3(float* dep_delay, float* arr_delay, float* weather_delay, flo
 						cudaMemcpy(dev_resSimple, &valorInicial, sizeof(int), cudaMemcpyHostToDevice);
 						cudaMemcpy(dev_resBasica, &valorInicial, sizeof(int), cudaMemcpyHostToDevice);
 						cudaMemcpy(dev_resIntermedia, &valorInicial, sizeof(int), cudaMemcpyHostToDevice);
-						cudaMemcpy(dev_resReduccion, &valorInicial, sizeof(int), cudaMemcpyHostToDevice);
 
 						dim3 dimGrid(numBloques);
 						dim3 dimBlock(hilosPorBloque);
@@ -150,12 +335,11 @@ void ejecutarFase3(float* dep_delay, float* arr_delay, float* weather_delay, flo
 								fase3_simple << <dimGrid, dimBlock >> > (dev_datos, numVuelos, dev_resSimple, 1);
 								fase3_basica << <dimGrid, dimBlock >> > (dev_datos, numVuelos, dev_resBasica, 1);
 								fase3_intermedia << <dimGrid, dimBlock >> > (dev_datos, numVuelos, dev_resIntermedia, 1);
-								fase3_reduccion << <dimGrid, dimBlock >> > (dev_datos, numVuelos, dev_resReduccion, 1);
+								res_reduccion = ejecutarReduccion(dev_datos, numVuelos, 1, hilosPorBloque);
 								cudaDeviceSynchronize();
 								cudaMemcpy(&res_simple, dev_resSimple, sizeof(int), cudaMemcpyDeviceToHost);
 								cudaMemcpy(&res_basica, dev_resBasica, sizeof(int), cudaMemcpyDeviceToHost);
 								cudaMemcpy(&res_intermedia, dev_resIntermedia, sizeof(int), cudaMemcpyDeviceToHost);
-								cudaMemcpy(&res_reduccion, dev_resReduccion, sizeof(int), cudaMemcpyDeviceToHost);
 								printf("\n[Simple] Max() DEP_DELAY = %d minutos\n", res_simple);
 								printf("[Basica] Max() DEP_DELAY = %d minutos\n", res_basica);
 								printf("[Intermedia] Max() DEP_DELAY = %d minutos\n", res_intermedia);
@@ -165,12 +349,11 @@ void ejecutarFase3(float* dep_delay, float* arr_delay, float* weather_delay, flo
 								fase3_simple << <dimGrid, dimBlock >> > (dev_datos, numVuelos, dev_resSimple, 0);
 								fase3_basica << <dimGrid, dimBlock >> > (dev_datos, numVuelos, dev_resBasica, 0);
 								fase3_intermedia << <dimGrid, dimBlock >> > (dev_datos, numVuelos, dev_resIntermedia, 0);
-								fase3_reduccion << <dimGrid, dimBlock >> > (dev_datos, numVuelos, dev_resReduccion, 0);
+								res_reduccion = ejecutarReduccion(dev_datos, numVuelos, 0, hilosPorBloque);
 								cudaDeviceSynchronize();
 								cudaMemcpy(&res_simple, dev_resSimple, sizeof(int), cudaMemcpyDeviceToHost);
 								cudaMemcpy(&res_basica, dev_resBasica, sizeof(int), cudaMemcpyDeviceToHost);
 								cudaMemcpy(&res_intermedia, dev_resIntermedia, sizeof(int), cudaMemcpyDeviceToHost);
-								cudaMemcpy(&res_reduccion, dev_resReduccion, sizeof(int), cudaMemcpyDeviceToHost);
 								printf("[Simple] Min() DEP_DELAY = %d minutos\n", res_simple);
 								printf("[Basica] Min() DEP_DELAY = %d minutos\n", res_basica);
 								printf("[Intermedia] Min() DEP_DELAY = %d minutos\n", res_intermedia);
@@ -183,12 +366,11 @@ void ejecutarFase3(float* dep_delay, float* arr_delay, float* weather_delay, flo
 								fase3_simple << <dimGrid, dimBlock >> > (dev_datos, numVuelos, dev_resSimple, 1);
 								fase3_basica << <dimGrid, dimBlock >> > (dev_datos, numVuelos, dev_resBasica, 1);
 								fase3_intermedia << <dimGrid, dimBlock >> > (dev_datos, numVuelos, dev_resIntermedia, 1);
-								fase3_reduccion << <dimGrid, dimBlock >> > (dev_datos, numVuelos, dev_resReduccion, 1);
+								res_reduccion = ejecutarReduccion(dev_datos, numVuelos, 1, hilosPorBloque);
 								cudaDeviceSynchronize();
 								cudaMemcpy(&res_simple, dev_resSimple, sizeof(int), cudaMemcpyDeviceToHost);
 								cudaMemcpy(&res_basica, dev_resBasica, sizeof(int), cudaMemcpyDeviceToHost);
 								cudaMemcpy(&res_intermedia, dev_resIntermedia, sizeof(int), cudaMemcpyDeviceToHost);
-								cudaMemcpy(&res_reduccion, dev_resReduccion, sizeof(int), cudaMemcpyDeviceToHost);
 								printf("\n[Simple] Max() ARR_DELAY = %d minutos\n", res_simple);
 								printf("[Basica] Max() ARR_DELAY = %d minutos\n", res_basica);
 								printf("[Intermedia] Max() ARR_DELAY = %d minutos\n", res_intermedia);
@@ -198,12 +380,11 @@ void ejecutarFase3(float* dep_delay, float* arr_delay, float* weather_delay, flo
 								fase3_simple << <dimGrid, dimBlock >> > (dev_datos, numVuelos, dev_resSimple, 0);
 								fase3_basica << <dimGrid, dimBlock >> > (dev_datos, numVuelos, dev_resBasica, 0);
 								fase3_intermedia << <dimGrid, dimBlock >> > (dev_datos, numVuelos, dev_resIntermedia, 0);
-								fase3_reduccion << <dimGrid, dimBlock >> > (dev_datos, numVuelos, dev_resReduccion, 0);
+								res_reduccion = ejecutarReduccion(dev_datos, numVuelos, 0, hilosPorBloque);
 								cudaDeviceSynchronize();
 								cudaMemcpy(&res_simple, dev_resSimple, sizeof(int), cudaMemcpyDeviceToHost);
 								cudaMemcpy(&res_basica, dev_resBasica, sizeof(int), cudaMemcpyDeviceToHost);
 								cudaMemcpy(&res_intermedia, dev_resIntermedia, sizeof(int), cudaMemcpyDeviceToHost);
-								cudaMemcpy(&res_reduccion, dev_resReduccion, sizeof(int), cudaMemcpyDeviceToHost);
 								printf("\n[Simple] Min() ARR_DELAY = %d minutos\n", res_simple);
 								printf("[Basica] Min() ARR_DELAY = %d minutos\n", res_basica);
 								printf("[Intermedia] Min() ARR_DELAY = %d minutos\n", res_intermedia);
@@ -216,12 +397,11 @@ void ejecutarFase3(float* dep_delay, float* arr_delay, float* weather_delay, flo
 								fase3_simple << <dimGrid, dimBlock >> > (dev_datos, numVuelos, dev_resSimple, 1);
 								fase3_basica << <dimGrid, dimBlock >> > (dev_datos, numVuelos, dev_resBasica, 1);
 								fase3_intermedia << <dimGrid, dimBlock >> > (dev_datos, numVuelos, dev_resIntermedia, 1);
-								fase3_reduccion << <dimGrid, dimBlock >> > (dev_datos, numVuelos, dev_resReduccion, 1);
+								res_reduccion = ejecutarReduccion(dev_datos, numVuelos, 1, hilosPorBloque);
 								cudaDeviceSynchronize();
 								cudaMemcpy(&res_simple, dev_resSimple, sizeof(int), cudaMemcpyDeviceToHost);
 								cudaMemcpy(&res_basica, dev_resBasica, sizeof(int), cudaMemcpyDeviceToHost);
 								cudaMemcpy(&res_intermedia, dev_resIntermedia, sizeof(int), cudaMemcpyDeviceToHost);
-								cudaMemcpy(&res_reduccion, dev_resReduccion, sizeof(int), cudaMemcpyDeviceToHost);
 								printf("\n[Simple] Max() WEATHER_DELAY = %d minutos\n", res_simple);
 								printf("[Basica] Max() WEATHER_DELAY = %d minutos\n", res_basica);
 								printf("[Intermedia] Max() WEATHER_DELAY = %d minutos\n", res_intermedia);
@@ -231,12 +411,11 @@ void ejecutarFase3(float* dep_delay, float* arr_delay, float* weather_delay, flo
 								fase3_simple << <dimGrid, dimBlock >> > (dev_datos, numVuelos, dev_resSimple, 0);
 								fase3_basica << <dimGrid, dimBlock >> > (dev_datos, numVuelos, dev_resBasica, 0);
 								fase3_intermedia << <dimGrid, dimBlock >> > (dev_datos, numVuelos, dev_resIntermedia, 0);
-								fase3_reduccion << <dimGrid, dimBlock >> > (dev_datos, numVuelos, dev_resReduccion, 0);
+								res_reduccion = ejecutarReduccion(dev_datos, numVuelos, 0, hilosPorBloque);
 								cudaDeviceSynchronize();
 								cudaMemcpy(&res_simple, dev_resSimple, sizeof(int), cudaMemcpyDeviceToHost);
 								cudaMemcpy(&res_basica, dev_resBasica, sizeof(int), cudaMemcpyDeviceToHost);
 								cudaMemcpy(&res_intermedia, dev_resIntermedia, sizeof(int), cudaMemcpyDeviceToHost);
-								cudaMemcpy(&res_reduccion, dev_resReduccion, sizeof(int), cudaMemcpyDeviceToHost);
 								printf("\n[Simple] Min() WEATHER_DELAY = %d minutos\n", res_simple);
 								printf("[Basica] Min() WEATHER_DELAY = %d minutos\n", res_basica);
 								printf("[Intermedia] Min() WEATHER_DELAY = %d minutos\n", res_intermedia);
@@ -249,12 +428,11 @@ void ejecutarFase3(float* dep_delay, float* arr_delay, float* weather_delay, flo
 								fase3_simple << <dimGrid, dimBlock >> > (dev_datos, numVuelos, dev_resSimple, 1);
 								fase3_basica << <dimGrid, dimBlock >> > (dev_datos, numVuelos, dev_resBasica, 1);
 								fase3_intermedia << <dimGrid, dimBlock >> > (dev_datos, numVuelos, dev_resIntermedia, 1);
-								fase3_reduccion << <dimGrid, dimBlock >> > (dev_datos, numVuelos, dev_resReduccion, 1);
+								res_reduccion = ejecutarReduccion(dev_datos, numVuelos, 1, hilosPorBloque);
 								cudaDeviceSynchronize();
 								cudaMemcpy(&res_simple, dev_resSimple, sizeof(int), cudaMemcpyDeviceToHost);
 								cudaMemcpy(&res_basica, dev_resBasica, sizeof(int), cudaMemcpyDeviceToHost);
 								cudaMemcpy(&res_intermedia, dev_resIntermedia, sizeof(int), cudaMemcpyDeviceToHost);
-								cudaMemcpy(&res_reduccion, dev_resReduccion, sizeof(int), cudaMemcpyDeviceToHost);
 								printf("\n[Simple] Max() DEP_TIME = %d minutos\n", res_simple);
 								printf("[Basica] Max() DEP_TIME = %d minutos\n", res_basica);
 								printf("[Intermedia] Max() DEP_TIME = %d minutos\n", res_intermedia);
@@ -264,12 +442,11 @@ void ejecutarFase3(float* dep_delay, float* arr_delay, float* weather_delay, flo
 								fase3_simple << <dimGrid, dimBlock >> > (dev_datos, numVuelos, dev_resSimple, 0);
 								fase3_basica << <dimGrid, dimBlock >> > (dev_datos, numVuelos, dev_resBasica, 0);
 								fase3_intermedia << <dimGrid, dimBlock >> > (dev_datos, numVuelos, dev_resIntermedia, 0);
-								fase3_reduccion << <dimGrid, dimBlock >> > (dev_datos, numVuelos, dev_resReduccion, 0);
+								res_reduccion = ejecutarReduccion(dev_datos, numVuelos, 0, hilosPorBloque);
 								cudaDeviceSynchronize();
 								cudaMemcpy(&res_simple, dev_resSimple, sizeof(int), cudaMemcpyDeviceToHost);
 								cudaMemcpy(&res_basica, dev_resBasica, sizeof(int), cudaMemcpyDeviceToHost);
 								cudaMemcpy(&res_intermedia, dev_resIntermedia, sizeof(int), cudaMemcpyDeviceToHost);
-								cudaMemcpy(&res_reduccion, dev_resReduccion, sizeof(int), cudaMemcpyDeviceToHost);
 								printf("\n[Simple] Min() DEP_TIME = %d minutos\n", res_simple);
 								printf("[Basica] Min() DEP_TIME = %d minutos\n", res_basica);
 								printf("[Intermedia] Min() DEP_TIME = %d minutos\n", res_intermedia);
@@ -282,12 +459,11 @@ void ejecutarFase3(float* dep_delay, float* arr_delay, float* weather_delay, flo
 								fase3_simple << <dimGrid, dimBlock >> > (dev_datos, numVuelos, dev_resSimple, 1);
 								fase3_basica << <dimGrid, dimBlock >> > (dev_datos, numVuelos, dev_resBasica, 1);
 								fase3_intermedia << <dimGrid, dimBlock >> > (dev_datos, numVuelos, dev_resIntermedia, 1);
-								fase3_reduccion << <dimGrid, dimBlock >> > (dev_datos, numVuelos, dev_resReduccion, 1);
+								res_reduccion = ejecutarReduccion(dev_datos, numVuelos, 1, hilosPorBloque);
 								cudaDeviceSynchronize();
 								cudaMemcpy(&res_simple, dev_resSimple, sizeof(int), cudaMemcpyDeviceToHost);
 								cudaMemcpy(&res_basica, dev_resBasica, sizeof(int), cudaMemcpyDeviceToHost);
 								cudaMemcpy(&res_intermedia, dev_resIntermedia, sizeof(int), cudaMemcpyDeviceToHost);
-								cudaMemcpy(&res_reduccion, dev_resReduccion, sizeof(int), cudaMemcpyDeviceToHost);
 								printf("\n[Simple] Max() ARR_TIME = %d minutos\n", res_simple);
 								printf("[Basica] Max() ARR_TIME = %d minutos\n", res_basica);
 								printf("[Intermedia] Max() ARR_TIME = %d minutos\n", res_intermedia);
@@ -297,12 +473,11 @@ void ejecutarFase3(float* dep_delay, float* arr_delay, float* weather_delay, flo
 								fase3_simple << <dimGrid, dimBlock >> > (dev_datos, numVuelos, dev_resSimple, 0);
 								fase3_basica << <dimGrid, dimBlock >> > (dev_datos, numVuelos, dev_resBasica, 0);
 								fase3_intermedia << <dimGrid, dimBlock >> > (dev_datos, numVuelos, dev_resIntermedia, 0);
-								fase3_reduccion << <dimGrid, dimBlock >> > (dev_datos, numVuelos, dev_resReduccion, 0);
+								res_reduccion = ejecutarReduccion(dev_datos, numVuelos, 0, hilosPorBloque);
 								cudaDeviceSynchronize();
 								cudaMemcpy(&res_simple, dev_resSimple, sizeof(int), cudaMemcpyDeviceToHost);
 								cudaMemcpy(&res_basica, dev_resBasica, sizeof(int), cudaMemcpyDeviceToHost);
 								cudaMemcpy(&res_intermedia, dev_resIntermedia, sizeof(int), cudaMemcpyDeviceToHost);
-								cudaMemcpy(&res_reduccion, dev_resReduccion, sizeof(int), cudaMemcpyDeviceToHost);
 								printf("\n[Simple] Min() ARR_TIME = %d minutos\n", res_simple);
 								printf("[Basica] Min() ARR_TIME = %d minutos\n", res_basica);
 								printf("[Intermedia] Min() ARR_TIME = %d minutos\n", res_intermedia);
@@ -318,7 +493,6 @@ void ejecutarFase3(float* dep_delay, float* arr_delay, float* weather_delay, flo
 						cudaFree(dev_resSimple);
 						cudaFree(dev_resBasica);
 						cudaFree(dev_resIntermedia);
-						cudaFree(dev_resReduccion);
 
 						break;
 					}

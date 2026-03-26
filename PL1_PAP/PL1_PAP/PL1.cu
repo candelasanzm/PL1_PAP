@@ -167,7 +167,7 @@ int main() {
 		printf("\nMenu:");
 		printf("\n1. Despegues");
 		printf("\n2. Aterrizajes");
-		printf("\n3. Reduccion de Retraso");
+		printf("\n3. Retrasos");
 		printf("\n4. Histograma de Aeropuertos");
 		printf("\n5. Modificar Ruta Base");
 		printf("\n6. Salir");
