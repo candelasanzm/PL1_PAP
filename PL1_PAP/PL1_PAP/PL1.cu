@@ -62,40 +62,62 @@ Dataset* leerCSV(const char* ruta) {
 	int fila = 0;
 	while (fgets(linea, 512, fichero) && fila < MAX_VUELOS) {
 		int i = 0; // contador de campos que se reinicia en cada linea
-		char* campo = strtok(linea, ","); // separamos los campos 
-		while (campo != NULL) {
+		char* pos = linea;
+		// Recorremos la linea campo a campo usando strchr en lugar de strtok
+		// strtok no distingue campos vacios (comas consecutivas) y desalinea las columnas
+		while (pos != NULL && *pos != '\0' && *pos != '\n') {
+			char* coma = strchr(pos, ','); // buscamos la siguiente coma
+			char campo[128] = "";
+			if (coma != NULL) {
+				int len = (int)(coma - pos);
+				if (len > 0 && len < 128) {
+					strncpy(campo, pos, len);
+					campo[len] = '\0';
+				}
+				pos = coma + 1; // avanzamos al siguiente campo
+			}
+			else {
+				// Ultimo campo de la linea (no tiene coma despues)
+				strncpy(campo, pos, 127);
+				campo[127] = '\0';
+				// Eliminar salto de linea del ultimo campo
+				campo[strcspn(campo, "\r\n")] = '\0';
+				pos = NULL; // terminamos el bucle
+			}
+
+			int vacio = (strlen(campo) == 0); // comprobamos si el campo esta vacio
+
 			if (i == 3) {
-				ds->tail_num[fila] = (campo == NULL) ? NULL : strdup(campo); // copiamos el string del campo en el array correspondiente
+				ds->tail_num[fila] = vacio ? NULL : strdup(campo);
 			}
 			else if (i == 5) {
-				ds->origin_seq_id[fila] = (campo == NULL) ? 0 : atoi(campo); // convertimos el string a entero y lo guardamos
+				ds->origin_seq_id[fila] = vacio ? 0 : (int)atof(campo);
 			}
 			else if (i == 6) {
-				ds->origin_airport[fila] = (campo == NULL) ? NULL : strdup(campo);
+				ds->origin_airport[fila] = vacio ? NULL : strdup(campo);
 			}
 			else if (i == 7) {
-				ds->dest_seq_id[fila] = (campo == NULL) ? 0 : atoi(campo); // si el campo está vacío guardamos NAN, si no convertimos el string a float
+				ds->dest_seq_id[fila] = vacio ? 0 : (int)atof(campo);
 			}
 			else if (i == 8) {
-				ds->dest_airport[fila] = (campo == NULL) ? NULL : strdup(campo);
+				ds->dest_airport[fila] = vacio ? NULL : strdup(campo);
 			}
 			else if (i == 9) {
-				ds->dep_time[fila] = (campo == NULL) ? NAN : (float)atoi(campo);
+				ds->dep_time[fila] = vacio ? NAN : (float)atof(campo);
 			}
 			else if (i == 10) {
-				ds->dep_delay[fila] = (campo == NULL) ? NAN : (float)atoi(campo); // si el campo está vacío se añade NAN en float, NULL en string, 0 en int, sino su valor
+				ds->dep_delay[fila] = vacio ? NAN : (float)atof(campo);
 			}
 			else if (i == 11) {
-				ds->arr_time[fila] = (campo == NULL) ? NAN :  (float)atoi(campo); // si el campo esta vacio se guarda NAN
+				ds->arr_time[fila] = vacio ? NAN : (float)atof(campo);
 			}
-			else if (i == 12) { 
-				ds->arr_delay[fila] = (campo == NULL) ? NAN : (float)atoi(campo);
+			else if (i == 12) {
+				ds->arr_delay[fila] = vacio ? NAN : (float)atof(campo);
 			}
 			else if (i == 13) {
-				ds->weather_delay[fila] = (campo == NULL) ? NAN : atof(campo);
+				ds->weather_delay[fila] = vacio ? NAN : (float)atof(campo);
 			}
 			i++; // incrementamos el contador
-			campo = strtok(NULL, ",");
 		}
 		fila++; // incrementamos el numero de fila
 	}
@@ -110,7 +132,7 @@ Dataset* leerCSV(const char* ruta) {
 }
 
 int main() {
-	// Mostramos el título de la practica durante 3 segundos
+	// Mostramos el tï¿½tulo de la practica durante 3 segundos
 	printf("======================================================================================================================\n");
 	printf("						EL1 PAP 2026						  \n");
 	printf("				Candela Sanz Martin y Maria de la Orden Montes					\n");
@@ -140,7 +162,7 @@ int main() {
 	printf("Dataset cargado: %d vuelos\n", ds->numVuelos);
 	printf("DEBUG arr_delay[20235] = %f\n", ds->arr_delay[20235]);
 
-	// Menú
+	// Menï¿½
 	int opcion = -1;
 	while (opcion != 0) {
 		printf("\nMenu:");
