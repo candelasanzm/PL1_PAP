@@ -1,5 +1,5 @@
-#include <cuda_runtime.h>
-#include <stdio.h>
+#include <cuda_runtime.h> // para funciones Cuda
+#include <stdio.h> // para printf y scanf
 #include <math.h> // para que NAN funcione
 #include <string.h> // para que strdup funcione
 #include <stdlib.h>  // para malloc, atoi, atof
@@ -14,19 +14,19 @@
 #define MAX_VUELOS 1200000
 #define RUTA "C:\\dataset_UAH\\Airline_dataset.csv"
 
-// Vamos a crear una estructura donde manejemos todas las variables juntas
+// Creamos una estructura donde agrupemos todos los arrays que contienen los datos del CSV en una misma estructura
 struct Dataset {
-	int numVuelos;
-	char** tail_num; //char** es como se define en CUDA un array de strings
-	int* origin_seq_id;
-	char** origin_airport;
-	int* dest_seq_id;
-	char** dest_airport;
-	float* dep_time;
-	float* dep_delay;
-	float* arr_time;
-	float* arr_delay;
-	float* weather_delay;
+	int numVuelos; // numero total de vuelos
+	char** tail_num; // columna 3
+	int* origin_seq_id; // columna 5
+	char** origin_airport; // columna 6
+	int* dest_seq_id; // columna 7
+	char** dest_airport; // columna 8
+	float* dep_time; // columna 9
+	float* dep_delay; // columna 10
+	float* arr_time; // columna 11
+	float* arr_delay; // columna 12
+	float* weather_delay; // columna 13
 };
 
 // Definimos la funcion donde vamos a hacer la lectura del csv
@@ -39,14 +39,14 @@ Dataset* leerCSV(const char* ruta) {
 		return NULL;
 	}
 
-	char linea[512];
+	char linea[512]; // buffer donde guardamos cada linea del CSV al leerla
 
-	// Saltar la cabecera
-	fgets(linea, 512, fichero);
+	fgets(linea, 512, fichero); // Saltar la cabecera
 
 	// Vamos a reservar acceso en memoria
 	Dataset* ds = (Dataset*)malloc(sizeof(Dataset));
 
+	// Reservamos memoria para cada array del dataset
 	ds->tail_num = (char**)malloc(MAX_VUELOS * sizeof(char*));
 	ds->origin_seq_id = (int*)malloc(MAX_VUELOS * sizeof(int));
 	ds->origin_airport = (char**)malloc(MAX_VUELOS * sizeof(char*));
@@ -62,16 +62,14 @@ Dataset* leerCSV(const char* ruta) {
 	int fila = 0;
 	while (fgets(linea, 512, fichero) && fila < MAX_VUELOS) {
 		int i = 0; // contador de campos que se reinicia en cada linea
-		char* pos = linea;
-		// Recorremos la linea campo a campo usando strchr en lugar de strtok
-		// strtok no distingue campos vacios (comas consecutivas) y desalinea las columnas
-		while (pos != NULL && *pos != '\0' && *pos != '\n') {
-			char* coma = strchr(pos, ','); // buscamos la siguiente coma
-			char campo[128] = "";
+		char* pos = linea; // puntero con el que apuntamos al inicio de ela linea y avanzamos campo por campo
+		while (pos != NULL && *pos != '\0' && *pos != '\n') { // el bucle avanza desde donde el puntero esta en la posicion cero hasta donde el puntero esta al final de linea
+			char* coma = strchr(pos, ','); // buscamos la siguiente coma desde la posicion actual
+			char campo[128] = ""; // buffer donde guardamos el contenido del campo actual, inicializado vacio para evitar datos basura
 			if (coma != NULL) {
-				int len = (int)(coma - pos);
+				int len = (int)(coma - pos); // calculamos la longitud del campo, es decir, cuantos caracteres hay entre la posicion actual y la coma
 				if (len > 0 && len < 128) {
-					strncpy(campo, pos, len);
+					strncpy(campo, pos, len); // copiamos los caracteres seleccionados en campo
 					campo[len] = '\0';
 				}
 				pos = coma + 1; // avanzamos al siguiente campo
@@ -79,14 +77,14 @@ Dataset* leerCSV(const char* ruta) {
 			else {
 				// Ultimo campo de la linea (no tiene coma despues)
 				strncpy(campo, pos, 127);
-				campo[127] = '\0';
-				// Eliminar salto de linea del ultimo campo
-				campo[strcspn(campo, "\r\n")] = '\0';
-				pos = NULL; // terminamos el bucle
+				campo[127] = '\0';  // terminamos el string
+				campo[strcspn(campo, "\r\n")] = '\0'; // Eliminar salto de linea del ultimo campo
+				pos = NULL; // terminamos el bucle poniendo el puntero a NULL
 			}
 
 			int vacio = (strlen(campo) == 0); // comprobamos si el campo esta vacio
 
+			// En funcion del indice del campo guardamos el valor en el array correspondiente del dataset.Si el campo esta vacio guardamos 0 en int, NAN en float y NULL en string
 			if (i == 3) {
 				ds->tail_num[fila] = vacio ? NULL : strdup(campo);
 			}
@@ -132,7 +130,7 @@ Dataset* leerCSV(const char* ruta) {
 }
 
 int main() {
-	// Mostramos el t�tulo de la practica durante 3 segundos
+	// Mostramos el titulo de la practica durante 3 segundos antes de continuar
 	printf("======================================================================================================================\n");
 	printf("						EL1 PAP 2026						  \n");
 	printf("				Candela Sanz Martin y Maria de la Orden Montes					\n");
@@ -161,7 +159,7 @@ int main() {
 
 	printf("Dataset cargado: %d vuelos\n", ds->numVuelos);
 
-	// Men�
+	// Menu
 	int opcion = -1;
 	while (opcion != 0) {
 		printf("\nMenu:");
@@ -173,8 +171,7 @@ int main() {
 		printf("\n6. Salir");
 		printf("\nElija una opcion: ");
 
-		// Leemos la opcion seleccionada por el usuario
-		scanf("%d", &opcion);
+		scanf("%d", &opcion); // Leemos la opcion seleccionada por el usuario
 
 		switch (opcion) {
 			case 1: 
@@ -189,7 +186,10 @@ int main() {
 			case 4: printf("Sin implementar"); break;
 			case 5: printf("Sin implementar"); break;
 			case 6: printf("Sin implementar"); break;
-			default: printf("Opcion no valida, introduzca un numero entre 0 y 5\n"); break;
+
+			default: 
+				printf("Opcion no valida, introduzca un numero entre 0 y 5\n"); 
+				break;
 		}
 	}
 	
