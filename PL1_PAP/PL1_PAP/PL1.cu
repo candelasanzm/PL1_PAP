@@ -12,7 +12,7 @@
 #include "fase4.cuh"
 
 #define MAX_VUELOS 1200000
-#define RUTA "C:\\dataset_UAH\\Airline_dataset.csv"
+#define RUTA "C:\\Airline_dataset.csv"
 
 // Creamos una estructura donde agrupemos todos los arrays que contienen los datos del CSV en una misma estructura
 struct Dataset {
@@ -142,7 +142,7 @@ int main() {
 	Dataset* ds = NULL;
 	while (ds == NULL) {
 		printf("\nIntroduzca la ruta base del dataset: ");
-		printf("\n(pulse Intro para usar por defecto: C:\\dataset_UAH\\Airline_dataset.csv)\n");
+		printf("\n(pulse Intro para usar por defecto: C:\\Airline_dataset.csv)\n");
 		char ruta[256];
 		fgets(ruta, 256, stdin);
 		ruta[strcspn(ruta, "\n")] = '\0'; // Eliminar el salto de linea que mete fgets
