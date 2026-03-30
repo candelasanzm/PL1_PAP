@@ -131,11 +131,12 @@ Dataset* leerCSV(const char* ruta) {
 
 int main() {
 	// Mostramos el titulo de la practica durante 3 segundos antes de continuar
-	printf("======================================================================================================================\n");
-	printf("						EL1 PAP 2026						  \n");
-	printf("				Candela Sanz Martin y Maria de la Orden Montes					\n");
-	printf("======================================================================================================================\n");
-	//Sleep(1500);
+	printf("=================================================================================================================================================================================================================\n");
+	printf("												EL1 PAP 2026												  \n");
+	printf("										Candela Sanz Martin y Maria de la Orden Montes											\n");
+	printf("=================================================================================================================================================================================================================\n");
+	printf("\nBienvenido!\n");
+	Sleep(1500);
 
 	// Pedimos la ruta al usuario
 	Dataset* ds = NULL;
@@ -183,12 +184,50 @@ int main() {
 			case 3: 
 				ejecutarFase3(ds->dep_delay, ds->arr_delay, ds->weather_delay, ds->dep_time, ds->arr_time, ds->numVuelos);
 				break;
-			case 4: printf("Sin implementar"); break;
-			case 5: printf("Sin implementar"); break;
-			case 6: printf("Sin implementar"); break;
+			case 4: 
+				ejecutarFase4(ds->origin_seq_id, ds->dest_seq_id, ds->origin_airport, ds->dest_airport, ds->numVuelos);
+				break;
+			case 5: {
+				// Pedimos la nueva ruta al usuario y cargamos el dataset
+				Dataset* ds_nuevo = NULL;
+				while (ds_nuevo == NULL) {
+					printf("\nIntroduzca la ruta base del dataset: ");
+					printf("\n(pulse Intro para usar por defecto: C:\\dataset_UAH\\Airline_dataset.csv)\n");
+					char ruta[256];
+
+					// Limpiamos el buffer antes de leer la nueva ruta
+					int c;
+					while ((c = getchar()) != '\n' && c != EOF);
+
+					fgets(ruta, 256, stdin);
+					ruta[strcspn(ruta, "\n")] = '\0'; // Eliminar el salto de linea que mete fgets
+					// Si pulsa Intro sin escribir nada, usar ruta por defecto
+					if (strlen(ruta) == 0) {
+						strcpy(ruta, RUTA);
+					}
+
+					ds_nuevo = leerCSV(ruta);
+					// Contemplamos la opcion de que el dataset no se cargue bien
+					if (ds_nuevo == NULL) {
+						printf("Error al cargar el dataset, intentarlo de nuevo\n");
+					}
+				}
+
+				free(ds); // liberamos el dataset anterior
+				ds = ds_nuevo; // asignamos el nuevo dataset
+
+				printf("Dataset cargado: %d vuelos\n", ds->numVuelos);
+
+				break;
+			}
+
+			case 6: 
+				printf("Hasta luego!\n");
+				opcion = 0;
+				break;
 
 			default: 
-				printf("Opcion no valida, introduzca un numero entre 0 y 5\n"); 
+				printf("Opcion no valida, introduzca un numero entre 1 y 6\n"); 
 				break;
 		}
 	}
